@@ -1,0 +1,7 @@
+Sensor,Axis,ARW/VRW,Unit,Bias_Instability,Unit,BI_at_tau_s,RRW,Unit
+Gyro,Gx,0.3017,¡ã/¡Ìhr,8.4564,¡ã/hr,141.7,0.0275,¡ã/hr/¡Ìhr
+Gyro,Gy,0.3389,¡ã/¡Ìhr,6.1975,¡ã/hr,668.1,0.0233,¡ã/hr/¡Ìhr
+Gyro,Gz,0.5969,¡ã/¡Ìhr,5.6118,¡ã/hr,618.3,0.0183,¡ã/hr/¡Ìhr
+Accel,Ax,0.0813,m/s/¡Ìhr,68.4105,¦Ìg,15.0,0.0143,m/s/hr/¡Ìhr
+Accel,Ay,0.0799,m/s/¡Ìhr,74.1857,¦Ìg,8.0,0.0196,m/s/hr/¡Ìhr
+Accel,Az,0.1148,m/s/¡Ìhr,106.4023,¦Ìg,11.9,0.0165,m/s/hr/¡Ìhr

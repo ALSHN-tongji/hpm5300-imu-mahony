@@ -1,0 +1,7 @@
+Sensor,Axis,PSD_floor,Unit,ARW_VRW_estimate,Unit
+Gyro,Gx,4.090e-05,(deg/s)^2/Hz,0.384,°/√hr
+Gyro,Gy,3.588e-05,(deg/s)^2/Hz,0.359,°/√hr
+Gyro,Gz,2.587e-04,(deg/s)^2/Hz,0.965,°/√hr
+Accel,Ax,3.643e-08,g²/Hz,0.1123,m/s/√hr
+Accel,Ay,3.555e-08,g²/Hz,0.1109,m/s/√hr
+Accel,Az,7.459e-08,g²/Hz,0.1607,m/s/√hr
