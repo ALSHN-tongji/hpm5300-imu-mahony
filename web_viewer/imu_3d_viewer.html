@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>IMU 3D 姿态查看器</title>
+<style>
+  :root {
+    --bg: #0b0f17;
+    --panel: #10151f;
+    --panel-2: #0e131c;
+    --border: #1f2937;
+    --text: #d1d5db;
+    --dim: #6b7280;
+    --accent: #22d3ee;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+    display: flex; flex-direction: column;
+  }
+
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px; background: var(--panel);
+    border-bottom: 1px solid var(--border); flex: 0 0 auto;
+  }
+  header h1 { font-size: 14px; font-weight: 600; margin: 0; letter-spacing: .3px; }
+  header h1 span { color: var(--dim); font-weight: 400; margin-left: 6px; }
+  .spacer { flex: 1; }
+  .btn {
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 6px 12px; font-size: 13px; cursor: pointer; font-family: inherit;
+    transition: border-color .15s, color .15s;
+  }
+  .btn:hover { border-color: var(--accent); color: #fff; }
+  .btn.primary { border-color: var(--accent); color: var(--accent); }
+  .stat { font-family: var(--mono); font-size: 12px; color: var(--dim); display: flex; gap: 16px; }
+  label.toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--dim); cursor: pointer; user-select: none; }
+
+  main { position: relative; flex: 1 1 auto; min-height: 0; }
+  #viewer { display: block; width: 100%; height: 100%; }
+
+  #hud {
+    position: absolute; top: 12px; left: 12px;
+    background: rgba(16, 21, 31, 0.82); border: 1px solid var(--border);
+    border-radius: 4px; padding: 10px 12px;
+    font-family: var(--mono); font-size: 12px; line-height: 1.6;
+    pointer-events: none; backdrop-filter: blur(4px);
+  }
+  #hud .row { white-space: nowrap; }
+  #hud .label { color: var(--dim); margin-right: 6px; }
+  #hud .val { color: var(--text); }
+  #hud .val.acc { color: #fbbf24; }
+  #hud .val.gyr { color: #34d399; }
+  #hud .val.eul { color: #60a5fa; }
+  #hud .val.quat { color: #c084fc; }
+
+  #drop {
+    position: absolute; inset: 12px;
+    border: 2px dashed var(--border); border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 8px; text-align: center;
+    color: var(--dim); font-size: 14px; pointer-events: none;
+    opacity: 0; transition: opacity .2s;
+  }
+  #drop.show { opacity: 1; pointer-events: auto; background: rgba(11,15,23,.92); }
+  #drop b { color: var(--accent); font-weight: 600; }
+  #drop code { font-family: var(--mono); font-size: 12px; color: var(--dim); }
+
+  footer {
+    flex: 0 0 auto; padding: 10px 16px;
+    background: var(--panel); border-top: 1px solid var(--border);
+    display: flex; align-items: center; gap: 12px;
+  }
+  footer .btn { padding: 6px 14px; }
+  input[type="range"] { flex: 1; accent-color: var(--accent); cursor: pointer; height: 4px; }
+  .foot-meta { font-family: var(--mono); font-size: 12px; color: var(--dim); white-space: nowrap; }
+  select {
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 5px 8px; font-size: 13px; font-family: inherit;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>IMU 姿态查看器<span>quaternion-driven </span></h1>
+  <div class="spacer"></div>
+  <div class="stat">
+    <span id="stat-record" style="display:none; color:#ef4444; font-weight:600;">● REC 0</span>
+    <span id="stat-live" style="display:none; color:#22d3ee; font-weight:600;">● LIVE</span>
+    <span id="stat-samples">samples: 0</span>
+    <span id="stat-fps">fps: 0</span>
+  </div>
+  <label class="toggle"><input type="checkbox" id="flip" /> 镜像翻转</label>
+  <button class="btn" id="btn-serial">连接串口</button>
+  <select id="baud" title="串口波特率">
+    <option value="115200" selected>115200</option>
+    <option value="460800">460800</option>
+    <option value="921600">921600</option>
+  </select>
+  <button class="btn" id="btn-record">● 录制</button>
+  <button class="btn" id="btn-load">加载 CSV</button>
+  <input type="file" id="file" accept=".csv,.txt" style="display:none" />
+</header>
+
+<main>
+  <canvas id="viewer"></canvas>
+  <div id="hud">
+    <div class="row"><span class="label">ACCEL</span><span class="val acc" id="hud-acc">X=+0.000 Y=+0.000 Z=+0.000 g</span></div>
+    <div class="row"><span class="label">GYRO </span><span class="val gyr" id="hud-gyr">X=+0.0 Y=+0.0 Z=+0.0 °/s</span></div>
+    <div class="row"><span class="label">EULER</span><span class="val eul" id="hud-eul">R=+0.0 P=+0.0 Y=+0.0 °</span></div>
+    <div class="row"><span class="label">QUAT </span><span class="val quat" id="hud-quat">w=+1.0000 x=+0.0000 y=+0.0000 z=+0.0000</span></div>
+    <div class="row"><span class="label">IDX  </span><span class="val" id="hud-idx">0 / 0</span></div>
+  </div>
+  <div id="drop">
+    <div>把 CSV 拖到这里，或点右上角<b>「加载 CSV」</b></div>
+    <code>格式：Ax,Ay,Az,Gx,Gy,Gz,Roll,Pitch,Yaw,q0,q1,q2,q3</code>
+  </div>
+</main>
+
+<footer>
+  <button class="btn primary" id="btn-play">▶ 播放</button>
+  <button class="btn" id="btn-reset">⏮ 复位</button>
+  <select id="speed" title="播放速度">
+    <option value="0.25">0.25x</option>
+    <option value="0.5">0.5x</option>
+    <option value="1" selected>1x</option>
+    <option value="2">2x</option>
+    <option value="4">4x</option>
+  </select>
+  <input type="range" id="scrub" min="0" max="0" value="0" step="1" />
+  <label class="toggle"><input type="checkbox" id="loop" checked /> 循环</label>
+  <span class="foot-meta" id="foot-time">0 / 0</span>
+</footer>
+
+<script>
+/* =========================================================================
+ * 零依赖 3D 立方体渲染：四元数 -> 旋转矩阵 -> 透视投影 -> Canvas 2D 画框
+ * 数据格式（MODE 0，13 列）：Ax,Ay,Az,Gx,Gy,Gz,Roll,Pitch,Yaw,q0(w),q1(x),q2(y),q3(z)
+ * ========================================================================= */
+
+const canvas = document.getElementById('viewer');
+const ctx = canvas.getContext('2d');
+
+/* ── 状态 ── */
+const S = {
+  frames: [], idx: 0, playing: false, speed: 1, loop: true, flip: false,
+  cur: null,          // 当前帧（无数据时为 null，走待机动画）
+  idleT: 0,
+  live: false,        // 串口实时模式
+  serialPort: null,
+  recording: false,   // 实时数据录制
+  recordBuf: [],      // 录制缓冲（原始行）
+};
+
+/* ── 数学工具 ── */
+function quatToMat(w, x, y, z) {
+  const n = Math.hypot(w, x, y, z) || 1;
+  w /= n; x /= n; y /= n; z /= n;
+  const xx = x*x, yy = y*y, zz = z*z;
+  const xy = x*y, xz = x*z, yz = y*z;
+  const wx = w*x, wy = w*y, wz = w*z;
+  // 行主序 3x3：R = body -> world
+  return [
+    1-2*(yy+zz), 2*(xy-wz), 2*(xz+wy),
+    2*(xy+wz), 1-2*(xx+zz), 2*(yz-wx),
+    2*(xz-wy), 2*(yz+wx), 1-2*(xx+yy),
+  ];
+}
+function rot(m, p) {
+  return [
+    m[0]*p[0] + m[1]*p[1] + m[2]*p[2],
+    m[3]*p[0] + m[4]*p[1] + m[5]*p[2],
+    m[6]*p[0] + m[7]*p[1] + m[8]*p[2],
+  ];
+}
+
+/* ── 立方体几何 ── */
+const HS = 0.6;
+const V = [
+  [-HS,-HS,-HS],[ HS,-HS,-HS],[ HS, HS,-HS],[-HS, HS,-HS],  // 0..3 背面(z=-)
+  [-HS,-HS, HS],[ HS,-HS, HS],[ HS, HS, HS],[-HS, HS, HS],  // 4..7 正面(z=+)
+];
+const FACES = [
+  { idx:[4,5,6,7], c:'#334ce6' }, // +Z 蓝
+  { idx:[0,1,2,3], c:'#26388f' }, // -Z 暗蓝
+  { idx:[1,5,6,2], c:'#e63333' }, // +X 红
+  { idx:[0,4,7,3], c:'#b32626' }, // -X 暗红
+  { idx:[3,2,6,7], c:'#33cc33' }, // +Y 绿
+  { idx:[0,1,5,4], c:'#269926' }, // -Y 暗绿
+];
+
+/* ── 投影 + 绘制 ── */
+const CAM_D = 7; // 相机距离
+
+function project(p, cx, cy, s) {
+  const t = CAM_D / (CAM_D - p[2]);
+  return [cx + p[0]*t*s, cy - p[1]*t*s];
+}
+
+function drawArrow(p0, p1, color) {
+  ctx.strokeStyle = color; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.stroke();
+  const dx = p1[0]-p0[0], dy = p1[1]-p0[1];
+  const len = Math.hypot(dx, dy); if (len < 1) return;
+  const ux = dx/len, uy = dy/len, ah = 9;
+  ctx.beginPath();
+  ctx.moveTo(p1[0], p1[1]);
+  ctx.lineTo(p1[0]-ux*ah-uy*ah*0.5, p1[1]-uy*ah+ux*ah*0.5);
+  ctx.lineTo(p1[0]-ux*ah+uy*ah*0.5, p1[1]-uy*ah-ux*ah*0.5);
+  ctx.closePath(); ctx.fillStyle = color; ctx.fill();
+}
+
+function render() {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  const dpr = window.devicePixelRatio || 1;
+  if (canvas.width !== w*dpr || canvas.height !== h*dpr) {
+    canvas.width = w*dpr; canvas.height = h*dpr;
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = '#0b0f17'; ctx.fillRect(0, 0, w, h);
+
+  const cx = w/2, cy = h/2;
+  const s = Math.min(w, h) / 6;
+
+  // 当前四元数（数据帧 或 待机动画）
+  let qw, qx, qy, qz;
+  if (S.cur) {
+    const f = S.cur, sgn = S.flip ? -1 : 1;
+    qw = f.q0; qx = sgn*f.q1; qy = sgn*f.q2; qz = sgn*f.q3;
+  } else {
+    const a = S.idleT * 0.5;                 // 绕 Y 轴慢转
+    const wob = Math.sin(S.idleT * 0.4) * 0.26; // 轻微俯仰摆动
+    const cyaw = Math.cos(a), syaw = Math.sin(a);
+    const cp = Math.cos(wob), sp = Math.sin(wob);
+    qw = cyaw*cp; qx = 0; qy = syaw*cp; qz = cyaw*sp;
+  }
+  const m = quatToMat(qw, qx, qy, qz);
+
+  // 地面网格（世界系固定）
+  ctx.strokeStyle = 'rgba(43,58,82,0.45)'; ctx.lineWidth = 0.5;
+  const gy = -2;
+  for (let i = -5; i <= 5; i++) {
+    let a = project([-5, gy, i], cx, cy, s), b = project([5, gy, i], cx, cy, s);
+    ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke();
+    a = project([i, gy, -5], cx, cy, s); b = project([i, gy, 5], cx, cy, s);
+    ctx.beginPath(); ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]); ctx.stroke();
+  }
+
+  // 立方体面（画家算法：按深度从远到近画）
+  const faces = FACES.map(f => {
+    const pts = f.idx.map(i => {
+      const p = rot(m, V[i]);
+      return { p, xy: project(p, cx, cy, s) };
+    });
+    const depth = pts.reduce((a,o) => a + o.p[2], 0) / 4;
+    return { f, pts, depth };
+  }).sort((a, b) => a.depth - b.depth);
+
+  for (const o of faces) {
+    ctx.beginPath();
+    ctx.moveTo(o.pts[0].xy[0], o.pts[0].xy[1]);
+    for (let i = 1; i < 4; i++) ctx.lineTo(o.pts[i].xy[0], o.pts[i].xy[1]);
+    ctx.closePath();
+    ctx.fillStyle = o.f.c; ctx.fill();
+    ctx.strokeStyle = 'rgba(8,8,10,0.65)'; ctx.lineWidth = 1; ctx.stroke();
+  }
+
+  // 三轴箭头（随立方体旋转）
+  const origin = project(rot(m, [0,0,0]), cx, cy, s);
+  const axes = [
+    [2.0,0,0,'#ff5555'], [0,2.0,0,'#55ff55'], [0,0,2.0,'#5599ff'],
+  ];
+  for (const [ax,ay,az,color] of axes) {
+    drawArrow(origin, project(rot(m, [ax,ay,az]), cx, cy, s), color);
+  }
+}
+
+/* ── CSV 解析 ── */
+function parseCSV(text) {
+  const frames = [];
+  const lines = text.split(/\r?\n/);
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const p = line.split(',');
+    if (p.length < 13) continue;
+    const n = p.slice(0, 13).map(Number);
+    if (n.some(isNaN)) continue;
+    frames.push({ ax:n[0], ay:n[1], az:n[2], gx:n[3], gy:n[4], gz:n[5],
+                  roll:n[6], pitch:n[7], yaw:n[8], q0:n[9], q1:n[10], q2:n[11], q3:n[12] });
+  }
+  return frames;
+}
+
+function loadFrames(text) {
+  const f = parseCSV(text);
+  if (!f.length) { alert('没解析到有效数据。请确认是 MODE 0 的 13 列输出。'); return; }
+  S.frames = f; S.idx = 0; S.playing = true; S.cur = f[0];
+  document.getElementById('btn-play').textContent = '⏸ 暂停';
+  const scrub = document.getElementById('scrub');
+  scrub.max = f.length - 1; scrub.value = 0;
+  document.getElementById('stat-samples').textContent = 'samples: ' + f.length;
+  document.getElementById('drop').classList.remove('show');
+  applyFrame(f[0]);
+}
+
+/* ── HUD ── */
+function applyFrame(f) {
+  const s = x => (x >= 0 ? '+' : '') + x.toFixed(1);
+  const s3 = x => (x >= 0 ? '+' : '') + x.toFixed(3);
+  const s4 = x => (x >= 0 ? '+' : '') + x.toFixed(4);
+  document.getElementById('hud-acc').textContent = `X=${s3(f.ax)} Y=${s3(f.ay)} Z=${s3(f.az)} g`;
+  document.getElementById('hud-gyr').textContent = `X=${s(f.gx)} Y=${s(f.gy)} Z=${s(f.gz)} °/s`;
+  document.getElementById('hud-eul').textContent = `R=${s(f.roll)} P=${s(f.pitch)} Y=${s(f.yaw)} °`;
+  document.getElementById('hud-quat').textContent = `w=${s4(f.q0)} x=${s4(f.q1)} y=${s4(f.q2)} z=${s4(f.q3)}`;
+  if (S.live) {
+    document.getElementById('hud-idx').textContent = 'LIVE';
+    document.getElementById('foot-time').textContent = 'LIVE';
+  } else {
+    document.getElementById('hud-idx').textContent = `${Math.floor(S.idx)} / ${S.frames.length - 1}`;
+    document.getElementById('scrub').value = Math.floor(S.idx);
+    document.getElementById('foot-time').textContent = `${Math.floor(S.idx)} / ${S.frames.length - 1}`;
+  }
+}
+
+/* ── 主循环 ── */
+const BASE_FPS = 75; // MODE 0 实测输出约 75Hz
+let last = performance.now(), fpsAcc = 0, fpsN = 0, fpsLast = last;
+
+function loop(now) {
+  const dt = Math.min((now - last) / 1000, 0.1); last = now;
+
+  if (S.live) {
+    /* 实时模式：S.cur 由串口数据直接更新，这里不做回放推进 */
+  } else if (S.frames.length) {
+    if (S.playing) {
+      S.idx += BASE_FPS * S.speed * dt;
+      if (S.idx >= S.frames.length) {
+        if (S.loop) S.idx = 0;
+        else { S.idx = S.frames.length - 1; S.playing = false;
+               document.getElementById('btn-play').textContent = '▶ 播放'; }
+      }
+      S.cur = S.frames[Math.floor(S.idx)];
+      applyFrame(S.cur);
+    }
+  } else {
+    S.idleT += dt;
+  }
+
+  fpsN++; if (now - fpsLast >= 500) {
+    fpsAcc = fpsN * 1000 / (now - fpsLast);
+    document.getElementById('stat-fps').textContent = 'fps: ' + Math.round(fpsAcc);
+    fpsN = 0; fpsLast = now;
+  }
+
+  render();
+  requestAnimationFrame(loop);
+}
+
+/* ── 文件加载（顶层绑定，不依赖任何库）── */
+const btnLoad = document.getElementById('btn-load');
+const fileInput = document.getElementById('file');
+btnLoad.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', e => {
+  const f = e.target.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = () => loadFrames(r.result);
+  r.readAsText(f);
+});
+
+const drop = document.getElementById('drop');
+let dragDepth = 0;
+document.addEventListener('dragenter', e => { e.preventDefault(); dragDepth++; drop.classList.add('show'); });
+document.addEventListener('dragover', e => { e.preventDefault(); });
+document.addEventListener('dragleave', e => { dragDepth--; if (dragDepth <= 0) { dragDepth = 0; drop.classList.remove('show'); } });
+document.addEventListener('drop', e => {
+  e.preventDefault(); dragDepth = 0; drop.classList.remove('show');
+  const f = e.dataTransfer.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = () => loadFrames(r.result);
+  r.readAsText(f);
+});
+
+/* ── 串口实时模式（WebSerial，需 Chrome/Edge + localhost/HTTPS）── */
+async function connectSerial() {
+  if (!('serial' in navigator)) {
+    alert('当前浏览器不支持 WebSerial。\n请用 Chrome/Edge，并通过 localhost 打开：\n\n  cd 到 tools 目录\n  python -m http.server 8000\n  浏览器访问 http://localhost:8000/imu_3d_viewer.html');
+    return;
+  }
+  try {
+    const port = await navigator.serial.requestPort();
+    await port.open({ baudRate: parseInt(document.getElementById('baud').value, 10) });
+    S.serialPort = port;
+    S.live = true;
+    S.frames = [];
+    S.playing = false;
+    document.getElementById('btn-serial').textContent = '断开串口';
+    document.getElementById('stat-live').style.display = 'inline';
+    document.getElementById('drop').classList.remove('show');
+    document.getElementById('btn-play').textContent = '▶ 播放';
+    readSerialLoop();
+  } catch (e) {
+    if (e.name !== 'NotFoundError') alert('串口打开失败：' + e.message);
+  }
+}
+
+async function readSerialLoop() {
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const reader = S.serialPort.readable.getReader();
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buffer.indexOf('\n')) >= 0) {
+        handleLiveLine(buffer.slice(0, idx).trim());
+        buffer = buffer.slice(idx + 1);
+      }
+    }
+  } catch (e) {
+    /* 串口关闭或读错误，走清理 */
+  } finally {
+    reader.releaseLock();
+    S.live = false;
+    S.serialPort = null;
+    document.getElementById('btn-serial').textContent = '连接串口';
+    document.getElementById('stat-live').style.display = 'none';
+  }
+}
+
+function handleLiveLine(line) {
+  if (!line || line.startsWith('#')) return;
+  const p = line.split(',');
+  if (p.length < 13) return;
+  const n = p.slice(0, 13).map(Number);
+  if (n.some(isNaN)) return;
+  if (S.recording) {
+    S.recordBuf.push(line);
+    document.getElementById('stat-record').textContent = '● REC ' + S.recordBuf.length;
+  }
+  const f = { ax:n[0], ay:n[1], az:n[2], gx:n[3], gy:n[4], gz:n[5],
+              roll:n[6], pitch:n[7], yaw:n[8], q0:n[9], q1:n[10], q2:n[11], q3:n[12] };
+  S.cur = f;
+  applyFrame(f);
+}
+
+/* ── 录制：实时数据流一键保存 CSV ── */
+function downloadCSV(lines, filename) {
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+function timestamp() {
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+document.getElementById('btn-record').addEventListener('click', () => {
+  if (!S.live) { alert('请先「连接串口」，收到实时数据后再录制。'); return; }
+  if (S.recording) {
+    S.recording = false;
+    document.getElementById('btn-record').textContent = '● 录制';
+    document.getElementById('stat-record').style.display = 'none';
+    if (S.recordBuf.length) downloadCSV(S.recordBuf, 'imu_live_' + timestamp() + '.csv');
+  } else {
+    S.recordBuf = [];
+    S.recording = true;
+    document.getElementById('btn-record').textContent = '■ 停止保存';
+    document.getElementById('stat-record').style.display = 'inline';
+    document.getElementById('stat-record').textContent = '● REC 0';
+  }
+});
+
+/* ── 控制 ── */
+document.getElementById('btn-serial').addEventListener('click', () => {
+  if (S.serialPort) S.serialPort.close();
+  else connectSerial();
+});
+document.getElementById('btn-play').addEventListener('click', () => {
+  if (!S.frames.length) return;
+  S.playing = !S.playing;
+  document.getElementById('btn-play').textContent = S.playing ? '⏸ 暂停' : '▶ 播放';
+});
+document.getElementById('btn-reset').addEventListener('click', () => {
+  S.idx = 0; if (S.frames.length) { S.cur = S.frames[0]; applyFrame(S.cur); }
+});
+document.getElementById('speed').addEventListener('change', e => { S.speed = parseFloat(e.target.value); });
+document.getElementById('loop').addEventListener('change', e => { S.loop = e.target.checked; });
+document.getElementById('scrub').addEventListener('input', e => {
+  S.idx = parseInt(e.target.value, 10);
+  if (S.frames.length) { S.cur = S.frames[Math.floor(S.idx)]; applyFrame(S.cur); }
+});
+document.getElementById('flip').addEventListener('change', () => {
+  if (S.frames.length) { S.cur = S.frames[Math.floor(S.idx)]; }
+});
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space') { e.preventDefault(); document.getElementById('btn-play').click(); }
+  else if (e.code === 'KeyR') document.getElementById('btn-reset').click();
+});
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
