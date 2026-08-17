@@ -418,8 +418,6 @@ python -m http.server 8000
   - 页面左右分栏渲染双三维模型 + 实时 Roll/Pitch/Yaw 漂移对比曲线
   - 实时输出稳态噪声 RMS、每小时漂移速率量化指标
   - 支持网页端实时修改 Kp/Ki/β 参数，300 ms 自动重算，无需重新编译烧录固件
-<img src="web_viewer/screenshot/imu_3d_demo.png" width="720"/>
-<img src="web_viewer/screenshot/algo_compare.png" width="720"/>
 ---
 
 ## 🔧 故障排查
